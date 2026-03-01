@@ -65,6 +65,21 @@ function getCurrency(currency: string): string {
   return currency;
 }
 
+function isResponseAnError<T>(
+  response: Response<T> | undefined,
+  context: string
+): boolean {
+  if (response === undefined) {
+    Logger.warn('moex response is undefined', context);
+    return true;
+  }
+  if (response.issError) {
+    Logger.warn(`moex response has error: ${response.issError}`, context);
+    return true;
+  }
+  return false;
+}
+
 /// So, we try to guess sectors of security by looking into indexes,
 /// in which this security was put by MOEX
 const indexToSectorMapping = new Map<string, string[]>([
@@ -85,9 +100,7 @@ async function getSectors(
 ): Promise<{ name: string; weight: number }[]> {
   const indicesResponse: Response<{ indices: ResponseData }> =
     await moexClient.security.getSecurityIndexes({ security: symbol });
-  const errorMessage = indicesResponse.issError;
-  if (errorMessage) {
-    Logger.warn(errorMessage, 'MoexService.getSectors');
+  if (isResponseAnError(indicesResponse, 'MoexService.getSectors')) {
     return [];
   }
 
@@ -122,8 +135,7 @@ async function getDividendsFromMoex({
 }> {
   const response: Response<{ dividends: ResponseData }> =
     await moexClient.request(`securities/${symbol}/dividends`);
-  if (response.issError) {
-    Logger.warn(response.issError, 'MoexService.getDividends');
+  if (isResponseAnError(response, 'MoexService.getDividendsFromMoex')) {
     return {};
   }
 
@@ -150,6 +162,7 @@ async function getDividendsFromMoex({
 }
 
 async function readBatchedResponse<T>(
+  context: string,
   getNextBatch: (start: number) => Promise<Response<T>>,
   extractor: (batch: Response<T>) => ResponseData,
   max_items?: number
@@ -159,11 +172,7 @@ async function readBatchedResponse<T>(
 
   do {
     const response: Response<T> = await getNextBatch(wholeResponse.data.length);
-    if (response === undefined) {
-      break;
-    }
-    if (response.issError) {
-      Logger.warn(response.issError, 'MoexService.readBatchedResponse');
+    if (isResponseAnError(response, context)) {
       break;
     }
 
@@ -207,9 +216,12 @@ async function getSecuritySpecification(
 ): Promise<Map<string | number, Map<string, string | number>>> {
   const securitySpecificationResponse =
     await moexClient.security.getSecuritySpecification({ security: symbol });
-  const errorMessage = securitySpecificationResponse.issError;
-  if (errorMessage) {
-    Logger.warn(errorMessage, 'MoexService.getAssetProfile');
+  if (
+    isResponseAnError(
+      securitySpecificationResponse,
+      'MoexService.getSecuritySpecification'
+    )
+  ) {
     return new Map<string | number, Map<string, string | number>>();
   }
 
@@ -474,6 +486,7 @@ export class MoexService implements DataProviderInterface {
     const historyResponse = await readBatchedResponse<{
       history: ResponseData;
     }>(
+      'MoexService.getHistorical',
       async (x) => {
         params['start'] = x;
         return await moexClient.request(
@@ -566,6 +579,7 @@ export class MoexService implements DataProviderInterface {
     };
 
     const searchResponse = await readBatchedResponse<ISecuritiesResponse>(
+      'MoexService.search',
       async (x) => {
         params['start'] = x;
         return await moexClient.security.getSecurities(params);
